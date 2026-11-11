@@ -1,0 +1,10 @@
+[package]
+name = "lab5-watcher"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+yaml_serde = "0.10.7"
+toml = "1.2.1"
