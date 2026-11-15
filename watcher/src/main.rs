@@ -66,9 +66,6 @@ impl MetricsSnapshot {
             disk: BTreeMap::new(),
         }
     }
-    fn default_dev() -> Self {
-        Self::default_snapshot()
-    }
 }
 
 /// Снимок метрик одного диска (объёмы в 1Кб блоках).
@@ -340,11 +337,11 @@ pub fn collect_metrics() -> Result<MetricsSnapshot, String> {
     })
 }
 
-/// Вычисляет средние значения и стандартные отклонения по истории.
-pub fn calculate_stats(history: &HistoryData) -> (MetricsSnapshot, MetricsSnapshot) {
+/// Вычисляет средние значения метрик по истории.
+pub fn calculate_stats(history: &HistoryData) -> MetricsSnapshot {
     let len = history.data.len();
     if len == 0 {
-        return (MetricsSnapshot::default_snapshot(), MetricsSnapshot::default_dev());
+        return MetricsSnapshot::default_snapshot();
     }
 
     // Используем f64 для накопления, чтобы избежать переполнения.
@@ -403,67 +400,7 @@ pub fn calculate_stats(history: &HistoryData) -> (MetricsSnapshot, MetricsSnapsh
         }).collect(),
     };
 
-    // Стандартные отклонения (по выборке, n-1).
-    let mut dev_ps_total: f64 = 0.0;
-    let mut dev_ps_zombie: f64 = 0.0;
-    let mut dev_mem: (f64, f64, f64, f64, f64, f64) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-    let mut dev_cpus: BTreeMap<u32, f64> = BTreeMap::new();
-    let mut dev_disk: BTreeMap<String, (f64, f64, f64, f64)> = BTreeMap::new();
-
-    for entry in &history.data {
-        let m = &entry.metrics;
-        dev_ps_total += (m.ps.total as f64 - avg.ps.total as f64).powi(2);
-        dev_ps_zombie += (m.ps.zombie as f64 - avg.ps.zombie as f64).powi(2);
-
-        dev_mem.0 += (m.memory.total as f64 - avg.memory.total as f64).powi(2);
-        dev_mem.1 += (m.memory.used as f64 - avg.memory.used as f64).powi(2);
-        dev_mem.2 += (m.memory.free as f64 - avg.memory.free as f64).powi(2);
-        dev_mem.3 += (m.memory.cached as f64 - avg.memory.cached as f64).powi(2);
-        dev_mem.4 += (m.memory.swap_total as f64 - avg.memory.swap_total as f64).powi(2);
-        dev_mem.5 += (m.memory.swap_used as f64 - avg.memory.swap_used as f64).powi(2);
-
-        for (&id, &pct) in &m.cpus {
-            let avg_pct = avg.cpus.get(&id).copied().unwrap_or(0.0);
-            let entry = dev_cpus.entry(id).or_insert(0.0);
-            *entry += (pct - avg_pct).powi(2) as f64;
-        }
-        for (name, dm) in &m.disk {
-            if let Some(avg_dm) = avg.disk.get(name) {
-                let entry_dev = dev_disk.entry(name.clone()).or_insert((0.0, 0.0, 0.0, 0.0));
-                entry_dev.0 += (dm.total as f64 - avg_dm.total as f64).powi(2);
-                entry_dev.1 += (dm.used as f64 - avg_dm.used as f64).powi(2);
-                entry_dev.2 += (dm.avail as f64 - avg_dm.avail as f64).powi(2);
-                entry_dev.3 += (dm.usage - avg_dm.usage).powi(2) as f64;
-            }
-        }
-    }
-
-    let scale = if len > 1 { 1.0 / ((len - 1) as f64) } else { 1.0 };
-    let dev_result = MetricsSnapshot {
-        ps: ProcessesSnapshot {
-            total: (dev_ps_total * scale).sqrt() as u32,
-            zombie: (dev_ps_zombie * scale).sqrt() as u32,
-        },
-        cpus: dev_cpus.into_iter().map(|(id, v)| (id, (v * scale).sqrt() as f32)).collect(),
-        memory: MemorySnapshot {
-            total: (dev_mem.0 * scale).sqrt() as u32,
-            used: (dev_mem.1 * scale).sqrt() as u32,
-            free: (dev_mem.2 * scale).sqrt() as u32,
-            cached: (dev_mem.3 * scale).sqrt() as u32,
-            swap_total: (dev_mem.4 * scale).sqrt() as u32,
-            swap_used: (dev_mem.5 * scale).sqrt() as u32,
-        },
-        disk: dev_disk.into_iter().map(|(name, v)| {
-            (name, DiskSnapshot {
-                total: (v.0 * scale).sqrt() as u64,
-                used: (v.1 * scale).sqrt() as u64,
-                avail: (v.2 * scale).sqrt() as u64,
-                usage: (v.3 * scale).sqrt() as f32,
-            })
-        }).collect(),
-    };
-
-    (avg, dev_result)
+    avg
 }
 
 /// Разбивает текст на строки макс. 79 символов и отправляет через wall, по 20 строк за вызов.
@@ -613,7 +550,7 @@ fn main() {
             save_history(history_path, &history);
 
             // Вычисляем средние и отклонения.
-            let (avg, _dev) = calculate_stats(&history);
+            let avg = calculate_stats(&history);
 
             // Проверяем пороги и отправляем алерты.
                     check_and_alert(
